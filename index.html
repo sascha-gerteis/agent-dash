@@ -266,16 +266,26 @@ window.AGENT_DASHBOARD_CONFIG = {
 
     <section class="page" id="page-write">
       <div class="header">
-        <div><h2>Write Email</h2><p>Create a reusable update, preview it as an agent, and export or send the backend-ready package.</p></div>
+        <div><h2>Email Sender</h2><p>Select a saved template, edit wording and media, choose recipients, then send and save the campaign to history.</p></div>
         <div class="actions">
           <button id="copyHtmlBtn">Copy HTML</button>
           <button id="downloadHtmlBtn">Download HTML</button>
-          <button id="sendPackageTopBtn" class="primary">Create send package</button>
+          <button id="sendPackageTopBtn" class="primary">Send emails</button>
         </div>
       </div>
       <div class="grid writeSplit">
         <div class="card">
           <div class="softCard">
+            <h3>Choose template</h3>
+            <p>Load a saved template, then edit the wording, media, CTA, and sender details before sending.</p>
+            <div class="field"><label>Saved template</label><select id="writeTemplatePicker"></select></div>
+            <div class="actions" style="margin-top:10px">
+              <button id="loadWriteTemplateBtn" class="primary">Load template</button>
+              <button id="saveNamedTemplateBtn">Save current as template</button>
+              <button id="resetTemplateBtn" class="warn">Reset default</button>
+            </div>
+          </div>
+          <div class="softCard" style="margin-top:14px">
             <h3>Chat writer</h3>
             <p>Describe what the update is about. It will fill the structured email fields below.</p>
             <textarea id="writerPrompt" placeholder="Example: Tell agents about new beach club media, group packages, and Songkran promotions. Keep it professional and simple."></textarea>
@@ -314,9 +324,8 @@ window.AGENT_DASHBOARD_CONFIG = {
             <p class="muted" style="font-size:12px">Placeholders: {{name}}, {{first_name}}, {{last_name}}, {{company}}, {{email}}, {{country}}, {{date}}</p>
           </div>
           <div class="softCard" style="margin-top:14px">
-            <h3>Template actions</h3>
-            <p>Save this email structure so you can reuse it later.</p>
-            <div class="actions" style="margin-top:10px"><button id="saveNamedTemplateBtn">Save as template</button><button id="resetTemplateBtn" class="warn">Reset default</button></div>
+            <h3>Placeholders</h3>
+            <p style="font-size:12px;line-height:1.45" class="muted">Use {{name}}, {{first_name}}, {{last_name}}, {{company}}, {{email}}, {{country}}, and {{date}}. They will personalize for every recipient.</p>
           </div>
         </div>
         <div class="card">
@@ -331,14 +340,24 @@ window.AGENT_DASHBOARD_CONFIG = {
           <textarea id="textCode" class="code hide" readonly></textarea>
           <textarea id="payloadCode" class="code hide" readonly></textarea>
           <div class="softCard" style="margin-top:14px">
-            <h3>Send package</h3>
-            <p>If no contacts are selected, all active agents are included. Sending is handled by your backend.</p>
-            <div class="pillLine"><span id="recipientCount">0 recipients</span><span id="backendState">No backend set</span></div>
+            <h3>Send emails</h3>
+            <p>Choose who receives this campaign. For now, clicking send records the campaign, marks contacts updated, and saves everything to send history. The real email backend can be connected later.</p>
+            <div class="field"><label>Recipients</label>
+              <select id="sendTarget">
+                <option value="auto">Selected contacts, or all active if none selected</option>
+                <option value="selected">Selected contacts only</option>
+                <option value="all">All non-inactive contacts</option>
+                <option value="active">Active contacts only</option>
+                <option value="prospect">Prospects only</option>
+                <option value="due">Due for update only</option>
+              </select>
+            </div>
+            <div class="pillLine"><span id="recipientCount">0 recipients</span><span id="backendState">Frontend send mode</span></div>
             <div class="actions" style="margin-top:12px">
-              <button id="sendPackageBtn" class="primary">Create send package</button>
-              <button id="downloadPayloadBtn">Download JSON</button>
+              <button id="sendPackageBtn" class="primary">Send emails</button>
+              <button id="downloadPayloadBtn">Download send data</button>
               <button id="downloadRecipientsBtn">Recipients CSV</button>
-              <button id="markSentBtn" class="good">Mark as sent</button>
+              <button id="markSentBtn" class="good">Save to history only</button>
             </div>
           </div>
         </div>
@@ -369,7 +388,7 @@ window.AGENT_DASHBOARD_CONFIG = {
           <p>Connect this static GitHub Pages dashboard to Supabase so multiple people can view and update the same agent database.</p>
           <div class="field" style="margin-top:13px"><label>Supabase project URL</label><input id="supabaseUrl" placeholder="https://your-project.supabase.co"></div>
           <div class="field"><label>Supabase anon / publishable key</label><input id="supabaseAnonKey" placeholder="eyJ... or sb_publishable_..."></div>
-          <div class="field"><label>Access mode</label><select id="supabaseMode"><option value="public" selected>No-login internal mode</option></select></div>
+          <div class="field"><label>Access mode</label><select id="supabaseMode"><option value="public" selected>No-login shared database mode</option></select></div>
           <div class="field hide"><label>Login email</label><input id="authEmail" placeholder="not needed"></div>
           <div class="actions">
             <button id="saveSupabaseBtn" class="primary">Save connection</button>
@@ -380,7 +399,7 @@ window.AGENT_DASHBOARD_CONFIG = {
             <button id="downloadSqlBtn">Download SQL setup</button>
           </div>
           <div class="pillLine"><span id="cloudStatus">Local only</span><span id="cloudUser">No login needed</span></div>
-          <p class="muted" style="font-size:12px;margin-top:10px">No-login mode uses the Supabase anon key. Anyone with the dashboard URL can access the shared database if your Supabase anon policies allow it.</p>
+          <p class="muted" style="font-size:12px;margin-top:10px">This dashboard uses your Supabase shared database with no login. Anyone with the dashboard URL can access the shared data.</p>
         </div>
         <div class="card">
           <h3>Backend email service</h3>
@@ -529,7 +548,7 @@ function loadAll(){
   try{ template = Object.assign({}, defaultTemplate, JSON.parse(localStorage.getItem(KEY_TEMPLATE) || "{}")); }catch(e){ template = Object.assign({}, defaultTemplate); }
   try{ settings = Object.assign({}, defaultSettings, JSON.parse(localStorage.getItem(KEY_SETTINGS) || "{}")); }catch(e){ settings = Object.assign({}, defaultSettings); }
 
-  // Embedded config always wins over old local browser settings.
+  // Embedded config always wins. This prevents old blank localStorage from breaking Supabase.
   if(runtimeConfig.SUPABASE_URL){ settings.supabaseUrl = runtimeConfig.SUPABASE_URL; }
   if(runtimeConfig.SUPABASE_ANON_KEY){ settings.supabaseAnonKey = runtimeConfig.SUPABASE_ANON_KEY; }
   settings.supabaseMode = "public";
@@ -578,7 +597,7 @@ function goPage(page){
   if(el("mobileNav")) el("mobileNav").value = page;
 
   if(page === "contacts") renderContacts();
-  if(page === "write"){ fillTemplateForm(); fillPreviewContacts(); renderPreview(); }
+  if(page === "write"){ fillTemplateForm(); fillPreviewContacts(); renderWriteTemplatePicker(); renderPreview(); }
   if(page === "templates") renderTemplates();
   if(page === "history") renderHistory();
   if(page === "settings") fillSettingsForm();
@@ -1182,6 +1201,40 @@ function makeEmailText(contact, sourceTemplate){
   return [t.subject,"",t.heading,"",t.intro,"","What agents should know:"].concat(lines).concat(["",t.bodyText || "","Important note:",t.importantNote,"",(t.ctaText || "Learn more") + ": " + (t.ctaLink || ""),"","Best regards,",t.senderName || "Aquaverse Team","",t.footer || ""]).join("\n");
 }
 
+
+function renderWriteTemplatePicker(){
+  var picker = el("writeTemplatePicker");
+  if(!picker) return;
+  var current = picker.value;
+  picker.innerHTML = "";
+
+  var opt = document.createElement("option");
+  opt.value = "";
+  opt.textContent = savedTemplates.length ? "Choose a saved template" : "No saved templates yet";
+  picker.appendChild(opt);
+
+  savedTemplates.forEach(function(item){
+    var option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = (item.name || "Template") + " - " + (item.template &amp;&amp; item.template.subject ? item.template.subject : "No subject");
+    picker.appendChild(option);
+  });
+
+  if(current &amp;&amp; savedTemplates.some(function(t){ return t.id === current; })){
+    picker.value = current;
+  }
+}
+
+function loadWriteTemplateFromPicker(){
+  var picker = el("writeTemplatePicker");
+  if(!picker || !picker.value){
+    showToast("Choose a saved template first.");
+    return;
+  }
+  loadTemplate(picker.value);
+  goPage("write");
+}
+
 function renderPreview(){
   var c = sampleContact();
   var html = makeEmailHtml(c);
@@ -1193,16 +1246,40 @@ function renderPreview(){
   if(el("textCode")) el("textCode").value = text;
   if(el("payloadCode")) el("payloadCode").value = JSON.stringify(payload,null,2);
   if(el("recipientCount")) el("recipientCount").textContent = getRecipients().length + " recipients";
-  if(el("backendState")) el("backendState").textContent = settings.backendUrl ? "Backend set" : "No backend set";
+  if(el("backendState")) el("backendState").textContent = settings.backendUrl ? "Backend ready for later" : "Frontend send mode";
   if(el("overviewRecipientCount")) el("overviewRecipientCount").textContent = getRecipients().length + " recipients ready";
-  if(el("overviewBackendState")) el("overviewBackendState").textContent = settings.backendUrl ? "Backend set" : "No backend set";
+  if(el("overviewBackendState")) el("overviewBackendState").textContent = settings.backendUrl ? "Backend ready for later" : "Frontend send mode";
   updateCloudStatus();
 }
 
+function getSendTarget(){
+  var field = el("sendTarget");
+  return field ? field.value : "auto";
+}
+
 function getRecipients(){
-  var selected = contacts.filter(function(c){ return c.selected &amp;&amp; c.status !== "inactive" &amp;&amp; emailValid(c.email); });
+  var valid = contacts.filter(function(c){ return emailValid(c.email); });
+  var mode = getSendTarget();
+
+  if(mode === "selected"){
+    return valid.filter(function(c){ return c.selected &amp;&amp; c.status !== "inactive"; });
+  }
+  if(mode === "all"){
+    return valid.filter(function(c){ return c.status !== "inactive"; });
+  }
+  if(mode === "active"){
+    return valid.filter(function(c){ return c.status === "active"; });
+  }
+  if(mode === "prospect"){
+    return valid.filter(function(c){ return c.status === "prospect"; });
+  }
+  if(mode === "due"){
+    return valid.filter(function(c){ return c.status !== "inactive" &amp;&amp; isDue(c); });
+  }
+
+  var selected = valid.filter(function(c){ return c.selected &amp;&amp; c.status !== "inactive"; });
   if(selected.length) return selected;
-  return contacts.filter(function(c){ return c.status === "active" &amp;&amp; emailValid(c.email); });
+  return valid.filter(function(c){ return c.status === "active"; });
 }
 
 function buildPayload(withNewId){
@@ -1218,6 +1295,31 @@ function buildPayload(withNewId){
     templateSnapshot:Object.assign({},template),
     instruction:"Personalize placeholders per recipient in your backend before sending."
   };
+}
+
+
+async function sendEmailsFrontend(){
+  saveTemplateFromForm();
+  var payload = buildPayload(true);
+
+  if(!payload.recipients.length){
+    showToast("No recipients. Choose recipients or add active contacts first.");
+    return;
+  }
+
+  payload.delivery = {
+    mode: "frontend_only",
+    realEmailSent: false,
+    backendConnected: !!settings.backendUrl,
+    savedAt: nowIso(),
+    note: "Frontend workflow only. Real email delivery will be connected later through the backend."
+  };
+
+  saveHistoryItem("frontend sent", payload);
+  markContactsUpdated(payload.recipients);
+
+  showToast("Campaign saved to send history for " + payload.recipients.length + " recipients. Backend delivery will be connected later.");
+  goPage("history");
 }
 
 async function createSendPackage(){
@@ -1302,7 +1404,7 @@ function renderHistory(){
   if(!historyItems.length){
     var empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "No history yet. Create a send package or mark an email as sent.";
+    empty.textContent = "No send history yet. Send an email campaign or save the current campaign to history.";
     list.appendChild(empty);
     return;
   }
@@ -1436,6 +1538,7 @@ function saveNamedTemplate(){
   savedTemplates.unshift({id:uid(),name:name,createdAt:nowIso(),template:Object.assign({},template)});
   saveAll();
   renderTemplates();
+  renderWriteTemplatePicker();
   showToast("Template saved.");
 }
 
@@ -1506,6 +1609,7 @@ function duplicateTemplate(templateId){
   savedTemplates.unshift({id:uid(),name:item.name + " copy",createdAt:nowIso(),template:Object.assign({},item.template)});
   saveAll();
   renderTemplates();
+  renderWriteTemplatePicker();
   showToast("Template duplicated.");
 }
 
@@ -1515,6 +1619,7 @@ function deleteTemplate(templateId){
   saveAll();
   deleteCloudRow("email_templates", templateId);
   renderTemplates();
+  renderWriteTemplatePicker();
   showToast("Template deleted.");
 }
 
@@ -1759,8 +1864,12 @@ async function autoCloudSync(){
     var localTotal = contacts.length + savedTemplates.length + historyItems.length;
 
     if(cloudTotal === 0 &amp;&amp; localTotal &gt; 0){
-      await pushLocalToCloud(false);
-      showToast("Local data uploaded to Supabase.");
+      var ok = await pushLocalToCloud(false);
+      if(ok){
+        showToast("Local data uploaded to Supabase.");
+      }else{
+        showToast("Upload failed. Check Supabase table permissions.");
+      }
       return;
     }
 
@@ -1780,7 +1889,11 @@ async function autoCloudSync(){
   }catch(err){
     suppressCloudPush = false;
     console.error(err);
-    showToast("Auto sync failed: " + err.message);
+    var msg = err &amp;&amp; err.message ? err.message : String(err);
+    if(msg.indexOf("row-level security") !== -1 || msg.indexOf("42501") !== -1){
+      msg = "Supabase RLS is still blocking anon access. Run the no-login SQL fix.";
+    }
+    showToast("Auto sync failed: " + msg);
   }
 }
 
@@ -1823,9 +1936,9 @@ async function pushLocalToCloud(showMessage){
     await initSupabaseClient(false);
   }
   if(!canUseCloud()){
-    if(showMessage) showToast("Connect to Supabase and sign in first.");
+    if(showMessage) showToast("Connect to Supabase first.");
     updateCloudStatus();
-    return;
+    return false;
   }
   try{
     if(contacts.length){
@@ -1842,9 +1955,15 @@ async function pushLocalToCloud(showMessage){
     }
     updateCloudStatus();
     if(showMessage) showToast("Local data pushed to Supabase.");
+    return true;
   }catch(err){
     console.error(err);
-    if(showMessage) showToast("Push failed: " + err.message);
+    var msg = err &amp;&amp; err.message ? err.message : String(err);
+    if(msg.indexOf("row-level security") !== -1 || msg.indexOf("42501") !== -1){
+      msg = "Supabase RLS is still blocking writes. Run the no-login SQL fix again.";
+    }
+    if(showMessage) showToast("Push failed: " + msg);
+    return false;
   }
 }
 
@@ -1994,7 +2113,7 @@ function updateStats(){
     pills.innerHTML = "&lt;span&gt;" + due + " due now&lt;/span&gt;&lt;span&gt;" + getRecipients().length + " recipients ready&lt;/span&gt;";
   }
   if(el("overviewRecipientCount")) el("overviewRecipientCount").textContent = getRecipients().length + " recipients ready";
-  if(el("overviewBackendState")) el("overviewBackendState").textContent = settings.backendUrl ? "Backend set" : "No backend set";
+  if(el("overviewBackendState")) el("overviewBackendState").textContent = settings.backendUrl ? "Backend ready for later" : "Frontend send mode";
   updateCloudStatus();
 }
 
@@ -2254,13 +2373,16 @@ function bindEvents(){
   el("clearWriterBtn").addEventListener("click",function(){ el("writerPrompt").value = ""; });
   el("copyHtmlBtn").addEventListener("click",copyCurrentHtml);
   el("downloadHtmlBtn").addEventListener("click",downloadCurrentHtml);
-  el("sendPackageTopBtn").addEventListener("click",createSendPackage);
-  el("sendPackageBtn").addEventListener("click",createSendPackage);
+  el("sendPackageTopBtn").addEventListener("click",sendEmailsFrontend);
+  el("sendPackageBtn").addEventListener("click",sendEmailsFrontend);
   el("downloadPayloadBtn").addEventListener("click",downloadPayload);
   el("downloadRecipientsBtn").addEventListener("click",downloadRecipientsCsv);
   el("markSentBtn").addEventListener("click",markAsSent);
   el("saveNamedTemplateBtn").addEventListener("click",saveNamedTemplate);
   el("resetTemplateBtn").addEventListener("click",resetTemplate);
+  el("loadWriteTemplateBtn").addEventListener("click",loadWriteTemplateFromPicker);
+  el("writeTemplatePicker").addEventListener("change",function(){ if(el("writeTemplatePicker").value) loadWriteTemplateFromPicker(); });
+  el("sendTarget").addEventListener("change",renderPreview);
 
   el("newTemplateFromCurrentBtn").addEventListener("click",saveNamedTemplate);
   el("exportTemplatesBtn").addEventListener("click",exportTemplates);
