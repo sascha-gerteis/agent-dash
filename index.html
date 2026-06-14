@@ -123,7 +123,7 @@ textarea.code{width:100%;height:620px;min-height:620px;background:#0f172a;color:
 window.AGENT_DASHBOARD_CONFIG = {
   SUPABASE_URL: "https://iueppmnqeitzdedciogg.supabase.co",
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1ZXBwbW5xZWl0emRlZGNpb2dnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MjU4ODIsImV4cCI6MjA5NzAwMTg4Mn0.-0BM3BDKMtCbyr4T77y4qjgofAijkouJt0DqaQurOlw",
-  SUPABASE_MODE: "auth",
+  SUPABASE_MODE: "public",
 
   BACKEND_URL: "",
   BACKEND_API_KEY: "",
@@ -369,18 +369,18 @@ window.AGENT_DASHBOARD_CONFIG = {
           <p>Connect this static GitHub Pages dashboard to Supabase so multiple people can view and update the same agent database.</p>
           <div class="field" style="margin-top:13px"><label>Supabase project URL</label><input id="supabaseUrl" placeholder="https://your-project.supabase.co"></div>
           <div class="field"><label>Supabase anon / publishable key</label><input id="supabaseAnonKey" placeholder="eyJ... or sb_publishable_..."></div>
-          <div class="field"><label>Access mode</label><select id="supabaseMode"><option value="auth">Authenticated team mode</option><option value="public">Public anon mode, testing only</option></select></div>
-          <div class="field"><label>Your login email, for authenticated mode</label><input id="authEmail" placeholder="name@company.com"></div>
+          <div class="field"><label>Access mode</label><select id="supabaseMode"><option value="public" selected>No-login internal mode</option></select></div>
+          <div class="field hide"><label>Login email</label><input id="authEmail" placeholder="not needed"></div>
           <div class="actions">
             <button id="saveSupabaseBtn" class="primary">Save connection</button>
-            <button id="sendMagicLinkBtn">Send magic link</button>
-            <button id="signOutBtn">Sign out</button>
+            <button id="sendMagicLinkBtn" class="hide">Send magic link</button>
+            <button id="signOutBtn" class="hide">Sign out</button>
             <button id="pullCloudBtn">Pull cloud data</button>
             <button id="pushCloudBtn">Push local data</button>
             <button id="downloadSqlBtn">Download SQL setup</button>
           </div>
-          <div class="pillLine"><span id="cloudStatus">Local only</span><span id="cloudUser">Not signed in</span></div>
-          <p class="muted" style="font-size:12px;margin-top:10px">Use authenticated mode for real team access. Public mode is only for quick testing because anyone with the URL can modify the database if your RLS policies allow anon writes.</p>
+          <div class="pillLine"><span id="cloudStatus">Local only</span><span id="cloudUser">No login needed</span></div>
+          <p class="muted" style="font-size:12px;margin-top:10px">No-login mode uses the Supabase anon key. Anyone with the dashboard URL can access the shared database if your Supabase anon policies allow it.</p>
         </div>
         <div class="card">
           <h3>Backend email service</h3>
@@ -529,10 +529,10 @@ function loadAll(){
   try{ template = Object.assign({}, defaultTemplate, JSON.parse(localStorage.getItem(KEY_TEMPLATE) || "{}")); }catch(e){ template = Object.assign({}, defaultTemplate); }
   try{ settings = Object.assign({}, defaultSettings, JSON.parse(localStorage.getItem(KEY_SETTINGS) || "{}")); }catch(e){ settings = Object.assign({}, defaultSettings); }
 
-  // Embedded config should always win over old blank localStorage values.
+  // Embedded config always wins over old local browser settings.
   if(runtimeConfig.SUPABASE_URL){ settings.supabaseUrl = runtimeConfig.SUPABASE_URL; }
   if(runtimeConfig.SUPABASE_ANON_KEY){ settings.supabaseAnonKey = runtimeConfig.SUPABASE_ANON_KEY; }
-  if(runtimeConfig.SUPABASE_MODE){ settings.supabaseMode = runtimeConfig.SUPABASE_MODE; }
+  settings.supabaseMode = "public";
   if(runtimeConfig.BACKEND_URL){ settings.backendUrl = runtimeConfig.BACKEND_URL; }
   if(runtimeConfig.BACKEND_API_KEY){ settings.apiKey = runtimeConfig.BACKEND_API_KEY; }
   if(runtimeConfig.REPLY_TO){ settings.replyTo = runtimeConfig.REPLY_TO; }
@@ -1543,8 +1543,8 @@ function updateCloudStatus(){
 
   if(supabaseClient){
     if(mode === "public"){
-      text = "Supabase connected, public mode";
-      userText = "Anon access";
+      text = "Supabase connected";
+      userText = "No login needed";
     }else if(cloudState.signedIn){
       text = "Supabase connected";
       userText = cloudState.userEmail || "Signed in";
@@ -1591,8 +1591,6 @@ async function initSupabaseClient(loadAfterConnect){
 
     if(loadAfterConnect &amp;&amp; canUseCloud()){
       await autoCloudSync();
-    }else if(loadAfterConnect &amp;&amp; settings.supabaseMode === "auth" &amp;&amp; cloudState.connected &amp;&amp; !cloudState.signedIn){
-      showToast("Supabase is connected. Sign in with magic link to load shared data.");
     }
     return true;
   }catch(err){
@@ -1760,16 +1758,12 @@ async function autoCloudSync(){
     var cloudTotal = cloudAgents.length + cloudTemplates.length + cloudHistory.length;
     var localTotal = contacts.length + savedTemplates.length + historyItems.length;
 
-    // First setup case:
-    // If this browser already has local agents but Supabase is empty, push local data up automatically.
     if(cloudTotal === 0 &amp;&amp; localTotal &gt; 0){
       await pushLocalToCloud(false);
-      showToast("Local data was uploaded to Supabase.");
+      showToast("Local data uploaded to Supabase.");
       return;
     }
 
-    // Shared database case:
-    // If Supabase has data, use it as the source of truth for this browser/device.
     if(cloudTotal &gt; 0){
       suppressCloudPush = true;
       contacts = cloudAgents.map(rowToContact);
