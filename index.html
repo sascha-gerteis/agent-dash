@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent Outreach Dashboard</title>
 
-  <!-- External vendor libraries only -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
@@ -121,14 +120,6 @@ textarea.code{width:100%;height:620px;min-height:620px;background:#0f172a;color:
   </style>
 
   <script>
-/*
-  Paste your Supabase details here.
-
-  Use ONLY the anon / publishable key.
-  Never use the service_role key in frontend HTML.
-
-  You can also leave these blank and enter the values in the dashboard Settings page.
-*/
 window.AGENT_DASHBOARD_CONFIG = {
   SUPABASE_URL: "https://iueppmnqeitzdedciogg.supabase.co",
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1ZXBwbW5xZWl0emRlZGNpb2dnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MjU4ODIsImV4cCI6MjA5NzAwMTg4Mn0.-0BM3BDKMtCbyr4T77y4qjgofAijkouJt0DqaQurOlw",
@@ -440,11 +431,6 @@ window.AGENT_DASHBOARD_CONFIG = {
 
 <div id="toast" class="toast"></div>
 
-<!-- 
-  App code storage.
-  This is intentionally a TEMPLATE, not a SCRIPT.
-  It cannot display on the page.
--->
 <template id="agent-dashboard-app-code">
 
 (function(){
@@ -542,6 +528,14 @@ function loadAll(){
   try{ savedTemplates = JSON.parse(localStorage.getItem(KEY_TEMPLATES) || "[]"); }catch(e){ savedTemplates = []; }
   try{ template = Object.assign({}, defaultTemplate, JSON.parse(localStorage.getItem(KEY_TEMPLATE) || "{}")); }catch(e){ template = Object.assign({}, defaultTemplate); }
   try{ settings = Object.assign({}, defaultSettings, JSON.parse(localStorage.getItem(KEY_SETTINGS) || "{}")); }catch(e){ settings = Object.assign({}, defaultSettings); }
+
+  // Embedded config should always win over old blank localStorage values.
+  if(runtimeConfig.SUPABASE_URL){ settings.supabaseUrl = runtimeConfig.SUPABASE_URL; }
+  if(runtimeConfig.SUPABASE_ANON_KEY){ settings.supabaseAnonKey = runtimeConfig.SUPABASE_ANON_KEY; }
+  if(runtimeConfig.SUPABASE_MODE){ settings.supabaseMode = runtimeConfig.SUPABASE_MODE; }
+  if(runtimeConfig.BACKEND_URL){ settings.backendUrl = runtimeConfig.BACKEND_URL; }
+  if(runtimeConfig.BACKEND_API_KEY){ settings.apiKey = runtimeConfig.BACKEND_API_KEY; }
+  if(runtimeConfig.REPLY_TO){ settings.replyTo = runtimeConfig.REPLY_TO; }
 }
 
 function saveAll(){
@@ -1596,7 +1590,9 @@ async function initSupabaseClient(loadAfterConnect){
     updateCloudStatus();
 
     if(loadAfterConnect &amp;&amp; canUseCloud()){
-      await pullCloudData();
+      await autoCloudSync();
+    }else if(loadAfterConnect &amp;&amp; settings.supabaseMode === "auth" &amp;&amp; cloudState.connected &amp;&amp; !cloudState.signedIn){
+      showToast("Supabase is connected. Sign in with magic link to load shared data.");
     }
     return true;
   }catch(err){
@@ -1742,6 +1738,56 @@ function rowToHistory(r){
     html: r.html || "",
     text: r.text_content || ""
   };
+}
+
+
+async function autoCloudSync(){
+  if(!supabaseClient || !canUseCloud()) return;
+
+  try{
+    var agentsRes = await supabaseClient.from("agents").select("*").order("created_at", { ascending:false });
+    if(agentsRes.error) throw agentsRes.error;
+
+    var templatesRes = await supabaseClient.from("email_templates").select("*").order("created_at", { ascending:false });
+    if(templatesRes.error) throw templatesRes.error;
+
+    var historyRes = await supabaseClient.from("email_history").select("*").order("created_at", { ascending:false });
+    if(historyRes.error) throw historyRes.error;
+
+    var cloudAgents = agentsRes.data || [];
+    var cloudTemplates = templatesRes.data || [];
+    var cloudHistory = historyRes.data || [];
+    var cloudTotal = cloudAgents.length + cloudTemplates.length + cloudHistory.length;
+    var localTotal = contacts.length + savedTemplates.length + historyItems.length;
+
+    // First setup case:
+    // If this browser already has local agents but Supabase is empty, push local data up automatically.
+    if(cloudTotal === 0 &amp;&amp; localTotal &gt; 0){
+      await pushLocalToCloud(false);
+      showToast("Local data was uploaded to Supabase.");
+      return;
+    }
+
+    // Shared database case:
+    // If Supabase has data, use it as the source of truth for this browser/device.
+    if(cloudTotal &gt; 0){
+      suppressCloudPush = true;
+      contacts = cloudAgents.map(rowToContact);
+      savedTemplates = cloudTemplates.map(rowToTemplate);
+      historyItems = cloudHistory.map(rowToHistory);
+      saveAll();
+      suppressCloudPush = false;
+      renderAll();
+      showToast("Cloud data loaded from Supabase.");
+      return;
+    }
+
+    updateCloudStatus();
+  }catch(err){
+    suppressCloudPush = false;
+    console.error(err);
+    showToast("Auto sync failed: " + err.message);
+  }
 }
 
 async function pullCloudData(){
