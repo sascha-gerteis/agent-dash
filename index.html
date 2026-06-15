@@ -125,8 +125,8 @@ window.AGENT_DASHBOARD_CONFIG = {
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1ZXBwbW5xZWl0emRlZGNpb2dnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MjU4ODIsImV4cCI6MjA5NzAwMTg4Mn0.-0BM3BDKMtCbyr4T77y4qjgofAijkouJt0DqaQurOlw",
   SUPABASE_MODE: "public",
 
-  BACKEND_URL: "",
-  BACKEND_API_KEY: "",
+  BACKEND_URL: "https://iueppmnqeitzdedciogg.supabase.co/functions/v1/smartlead-agent-newsletter",
+  BACKEND_API_KEY: "AV-smartlead-GdOzwXYXx0SUZ1IhheTrDsLq",
   REPLY_TO: ""
 };
   </script>
@@ -144,6 +144,7 @@ window.AGENT_DASHBOARD_CONFIG = {
       <button data-page="write">Write Email</button>
       <button data-page="templates">Templates</button>
       <button data-page="history">History</button>
+      <button data-page="replies">Replies</button>
       <button data-page="settings">Settings</button>
     </nav>
     <div class="sideNote">Full version: contacts, templates, media, previews, backend package, sent history, exports, and backups.</div>
@@ -156,6 +157,7 @@ window.AGENT_DASHBOARD_CONFIG = {
       <option value="write">Write Email</option>
       <option value="templates">Templates</option>
       <option value="history">History</option>
+      <option value="replies">Replies</option>
       <option value="settings">Settings</option>
     </select>
 
@@ -380,6 +382,31 @@ window.AGENT_DASHBOARD_CONFIG = {
       <div class="card"><div class="grid" id="historyList"></div></div>
     </section>
 
+    <section class="page" id="page-replies">
+      <div class="header">
+        <div><h2>Replies</h2><p>View replies from Smartlead. Webhooks will save replies here automatically, and Sync replies can pull recent replies manually.</p></div>
+        <div class="actions">
+          <button id="syncRepliesBtn" class="primary">Sync replies</button>
+          <button id="refreshRepliesBtn">Refresh</button>
+        </div>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h3>Smartlead replies</h3>
+          <div id="replyList" class="list"></div>
+        </div>
+        <div class="card">
+          <h3>Reply routing</h3>
+          <p>Smartlead replies will appear here when webhook events arrive or when you manually sync.</p>
+          <div class="softCard">
+            <strong>Separate sales email</strong>
+            <p class="muted" style="font-size:13px;line-height:1.55;margin-top:6px">For the fastest reliable copy to sales, turn on forwarding in the actual sending inbox, for example Gmail or Outlook forwarding to the sales email. The dashboard stores replies here for visibility.</p>
+          </div>
+          <div class="pillLine" style="margin-top:14px"><span id="replyCountPill">0 replies</span><span>Smartlead base campaign 3494294</span></div>
+        </div>
+      </div>
+    </section>
+
     <section class="page" id="page-settings">
       <div class="header"><div><h2>Settings</h2><p>Connect your future email backend and manage local backup.</p></div></div>
       <div class="grid cols2">
@@ -463,6 +490,7 @@ var KEY_TEMPLATES = "agent_saved_templates_full_v6";
 
 var contacts = [];
 var historyItems = [];
+var replyItems = [];
 var savedTemplates = [];
 var settings = {};
 var activeHistoryId = "";
@@ -601,6 +629,7 @@ function goPage(page){
   if(page === "templates") renderTemplates();
   if(page === "history") renderHistory();
   if(page === "settings") fillSettingsForm();
+  if(page === "replies") loadRepliesFromSupabase(false);
   updateStats();
 }
 
@@ -1307,19 +1336,74 @@ async function sendEmailsFrontend(){
     return;
   }
 
-  payload.delivery = {
-    mode: "frontend_only",
-    realEmailSent: false,
-    backendConnected: !!settings.backendUrl,
-    savedAt: nowIso(),
-    note: "Frontend workflow only. Real email delivery will be connected later through the backend."
-  };
+  var sendBtn = el("sendPackageBtn");
+  var topBtn = el("sendPackageTopBtn");
+  if(sendBtn) sendBtn.disabled = true;
+  if(topBtn) topBtn.disabled = true;
 
-  saveHistoryItem("frontend sent", payload);
-  markContactsUpdated(payload.recipients);
+  try{
+    // If a backend endpoint is set in Settings, send real emails through the backend.
+    if(settings.backendUrl){
+      payload.delivery = {
+        mode: "backend",
+        realEmailSent: true,
+        backendConnected: true,
+        requestedAt: nowIso()
+      };
 
-  showToast("Campaign saved to send history for " + payload.recipients.length + " recipients. Backend delivery will be connected later.");
-  goPage("history");
+      var headers = { "Content-Type": "application/json" };
+      if(settings.apiKey){
+        headers["Authorization"] = "Bearer " + settings.apiKey;
+      }
+
+      var res = await fetch(settings.backendUrl, {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify(payload)
+      });
+
+      var data = {};
+      var text = await res.text();
+      try{ data = text ? JSON.parse(text) : {}; }catch(e){ data = { raw:text }; }
+
+      if(!res.ok || data.ok === false){
+        throw new Error(data.error || data.message || ("Backend failed with status " + res.status));
+      }
+
+      payload.delivery.backendResponse = data;
+      payload.delivery.sentAt = nowIso();
+
+      saveHistoryItem("sent", payload);
+      markContactsUpdated(payload.recipients);
+      await pushLocalToCloud(false);
+
+      showToast("Sent " + payload.recipients.length + " emails and saved to history.");
+      goPage("history");
+      return;
+    }
+
+    // No backend yet: keep the frontend demo workflow working.
+    payload.delivery = {
+      mode: "frontend_only",
+      realEmailSent: false,
+      backendConnected: false,
+      savedAt: nowIso(),
+      note: "Frontend workflow only. Add a backend endpoint in Settings to send real emails."
+    };
+
+    saveHistoryItem("frontend saved", payload);
+    markContactsUpdated(payload.recipients);
+    await pushLocalToCloud(false);
+
+    showToast("Campaign saved to send history for " + payload.recipients.length + " recipients. Add backend endpoint to send real emails.");
+    goPage("history");
+  }catch(err){
+    console.error(err);
+    showToast("Send failed: " + (err.message || err));
+  }finally{
+    if(sendBtn) sendBtn.disabled = false;
+    if(topBtn) topBtn.disabled = false;
+  }
 }
 
 async function createSendPackage(){
@@ -1396,6 +1480,93 @@ function saveHistoryItem(status,payload){
   saveAll();
   renderAll();
 }
+
+
+function getNewsletterCampaignIds(){
+  var ids = [];
+  historyItems.forEach(function(item){
+    var p = item.payload || {};
+    var d = p.delivery || {};
+    var r = d.backendResponse || {};
+    [r.campaign_id,r.newsletterCampaignId,r.newCampaignId,r.smartlead_campaign_id,d.campaign_id].forEach(function(v){
+      if(v &amp;&amp; ids.indexOf(String(v)) === -1) ids.push(String(v));
+    });
+  });
+  return ids;
+}
+function normalizeReplyRow(row){
+  return {
+    id: row.id || uid(),
+    campaign_id: row.campaign_id || "",
+    campaign_name: row.campaign_name || "",
+    lead_email: row.lead_email || "",
+    lead_name: row.lead_name || "",
+    subject: row.subject || "",
+    body: row.body || "",
+    received_at: row.received_at || row.created_at || "",
+    is_read: !!row.is_read
+  };
+}
+async function loadRepliesFromSupabase(showMessage){
+  if(!supabaseClient){ await initSupabaseClient(false); }
+  if(!supabaseClient){ if(showMessage) showToast("Supabase is not connected."); return; }
+  try{
+    var res = await supabaseClient.from("email_replies").select("*").order("received_at", { ascending:false });
+    if(res.error) throw res.error;
+    replyItems = (res.data || []).map(normalizeReplyRow);
+    renderReplies();
+    if(showMessage) showToast("Replies refreshed.");
+  }catch(err){
+    console.error(err);
+    if(showMessage) showToast("Could not load replies. Run the Smartlead replies SQL first.");
+  }
+}
+async function syncRepliesFromBackend(){
+  if(!settings.backendUrl){ showToast("Backend URL missing."); return; }
+  try{
+    var headers = { "Content-Type":"application/json" };
+    if(settings.apiKey){ headers["Authorization"] = "Bearer " + settings.apiKey; }
+    var res = await fetch(settings.backendUrl, {
+      method:"POST",
+      headers:headers,
+      body:JSON.stringify({ action:"sync_replies", campaignIds:getNewsletterCampaignIds() })
+    });
+    var text = await res.text();
+    var data = {};
+    try{ data = text ? JSON.parse(text) : {}; }catch(e){ data = { raw:text }; }
+    if(!res.ok || data.ok === false) throw new Error(data.error || data.message || ("Backend failed " + res.status));
+    await loadRepliesFromSupabase(false);
+    showToast("Synced " + (data.inserted || data.count || 0) + " replies.");
+  }catch(err){
+    console.error(err);
+    showToast("Reply sync failed: " + (err.message || err));
+  }
+}
+function renderReplies(){
+  var list = el("replyList");
+  if(!list) return;
+  list.innerHTML = "";
+  if(el("replyCountPill")) el("replyCountPill").textContent = replyItems.length + " replies";
+  if(!replyItems.length){
+    var empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "No replies yet. Click Sync replies after someone responds.";
+    list.appendChild(empty);
+    return;
+  }
+  replyItems.forEach(function(item){
+    var row = document.createElement("div");
+    row.className = "listItem";
+    var when = item.received_at ? new Date(item.received_at).toLocaleString() : "";
+    row.innerHTML =
+      '&lt;div class="rowTop"&gt;&lt;div&gt;&lt;strong&gt;' + escapeHtml(item.lead_name || item.lead_email || "Unknown sender") + '&lt;/strong&gt;&lt;p&gt;' + escapeHtml(item.lead_email || "") + '&lt;/p&gt;&lt;/div&gt;&lt;span&gt;' + escapeHtml(when) + '&lt;/span&gt;&lt;/div&gt;' +
+      '&lt;p&gt;&lt;strong&gt;' + escapeHtml(item.subject || "No subject") + '&lt;/strong&gt;&lt;/p&gt;' +
+      '&lt;div class="replyBody"&gt;' + escapeHtml(item.body || "No reply body found.") + '&lt;/div&gt;' +
+      '&lt;div class="pillLine" style="margin-top:10px"&gt;&lt;span&gt;Campaign ' + escapeHtml(item.campaign_id || "-") + '&lt;/span&gt;&lt;span&gt;' + escapeHtml(item.campaign_name || "Smartlead") + '&lt;/span&gt;&lt;/div&gt;';
+    list.appendChild(row);
+  });
+}
+
 
 function renderHistory(){
   var list = el("historyList");
@@ -2389,6 +2560,8 @@ function bindEvents(){
 
   el("exportHistoryBtn").addEventListener("click",exportHistoryJson);
   el("clearHistoryBtn").addEventListener("click",clearHistory);
+  el("syncRepliesBtn").addEventListener("click",syncRepliesFromBackend);
+  el("refreshRepliesBtn").addEventListener("click",function(){ loadRepliesFromSupabase(true); });
 
   el("saveSettingsBtn").addEventListener("click",function(){ saveSettingsFromForm(); showToast("Settings saved."); });
   ["backendUrl","apiKey","replyTo"].forEach(function(id){ el(id).addEventListener("input",saveSettingsFromForm); });
