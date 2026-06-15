@@ -113,6 +113,14 @@ textarea.code{width:100%;height:620px;min-height:620px;background:#0f172a;color:
 .growthRow{display:grid;grid-template-columns:110px 1fr 70px;gap:10px;align-items:center;margin:9px 0}
 .growthBar{height:12px;border-radius:999px;background:#e2e8f0;overflow:hidden}
 .growthBar span{display:block;height:100%;background:var(--brand);border-radius:999px}
+
+.list{display:grid;gap:12px;margin-top:12px}
+.listItem{border:1px solid var(--line);border-radius:14px;background:#fff;padding:14px}
+.rowTop{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}
+.rowTop p{margin:4px 0 0;color:var(--muted);font-size:13px}
+.rowTop span{color:var(--muted);font-size:12px;white-space:nowrap}
+.replyBody{white-space:pre-wrap;background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px;color:#24364d;line-height:1.5;max-height:180px;overflow:auto}
+
 @media(max-width:1120px){.app{display:block}aside{display:none}main{padding:18px}.mobileNav{display:block}.cols4,.cols3,.cols2,.split,.writeSplit{grid-template-columns:1fr}}
 @media(max-width:720px){.header{display:block}.header .actions{margin-top:12px}.row,.filters{grid-template-columns:1fr}iframe.preview{height:600px}.historyItem,.templateItem{grid-template-columns:1fr}}
 
@@ -164,7 +172,7 @@ window.AGENT_DASHBOARD_CONFIG = {
     <section class="page active" id="page-overview">
       <div class="header">
         <div><h2>Agent Outreach</h2><p>A full-feature dashboard for travel agent contacts, reusable email templates, bi-weekly Aquaverse updates, and sent email history.</p></div>
-        <span class="badge">Full feature v6</span>
+        <span class="badge">Replies clean view</span>
       </div>
       <div class="grid cols4">
         <div class="metric"><span>Agents</span><strong id="statAgents">0</strong></div>
@@ -1494,52 +1502,260 @@ function getNewsletterCampaignIds(){
   });
   return ids;
 }
+function replyText(value){
+  if(value == null) return "";
+  if(typeof value === "string"){
+    if(value === "[object Object]") return "";
+    return value;
+  }
+  if(typeof value === "number" || typeof value === "boolean") return String(value);
+
+  if(typeof value === "object"){
+    var preferred = ["body","text","html","message","content","preview_text","previewText","plain_text","plainText","value"];
+    for(var i=0;i&lt;preferred.length;i++){
+      var key = preferred[i];
+      if(value[key] != null){
+        var nested = replyText(value[key]);
+        if(nested) return nested;
+      }
+    }
+    try{ return JSON.stringify(value,null,2); }catch(e){ return ""; }
+  }
+
+  return "";
+}
+
+function cleanReplyBody(text){
+  text = replyText(text);
+  if(!text) return "";
+
+  text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+
+  var cutPatterns = [
+    /\nOn .* wrote:\s*/i,
+    /\nFrom:\s.*\nSent:\s.*\nTo:\s.*\nSubject:\s.*/i,
+    /\n-{2,}\s*Original Message\s*-{2,}/i,
+    /\n&gt; Fresh park news/i,
+    /\n&gt; Columbia Pictures Aquaverse/i
+  ];
+
+  var cutAt = -1;
+  cutPatterns.forEach(function(pattern){
+    var match = text.search(pattern);
+    if(match &gt; 0 &amp;&amp; (cutAt === -1 || match &lt; cutAt)){
+      cutAt = match;
+    }
+  });
+
+  if(cutAt &gt; -1){
+    text = text.slice(0, cutAt).trim();
+  }
+
+  text = text
+    .split("\n")
+    .filter(function(line){
+      return line.trim().indexOf("&gt;") !== 0;
+    })
+    .join("\n")
+    .trim();
+
+  return text || "No reply body found.";
+}
+
+function collectEmailsFromObject(value, found, depth){
+  found = found || [];
+  depth = depth || 0;
+  if(depth &gt; 8 || value == null) return found;
+
+  if(typeof value === "string" || typeof value === "number"){
+    var text = String(value);
+    var matches = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+    matches.forEach(function(email){
+      email = clean(email).toLowerCase();
+      if(email &amp;&amp; found.indexOf(email) === -1) found.push(email);
+    });
+    return found;
+  }
+
+  if(typeof value !== "object") return found;
+
+  if(Array.isArray(value)){
+    value.forEach(function(item){ collectEmailsFromObject(item, found, depth + 1); });
+    return found;
+  }
+
+  Object.keys(value).forEach(function(key){
+    collectEmailsFromObject(value[key], found, depth + 1);
+  });
+
+  return found;
+}
+
+function looksLikeMaskedSmartleadEmail(email){
+  email = clean(email).toLowerCase();
+  return /@mail\.gmail\.com$/.test(email) || /@amazonses\.com$/.test(email);
+}
+
+function isOwnOrSystemEmail(email){
+  email = clean(email).toLowerCase();
+  if(!email) return true;
+  return (
+    email.indexOf("danita@aquaverse-info.com") !== -1 ||
+    email.indexOf("aquaverse-info.com") !== -1 ||
+    email.indexOf("aquaverse-email.com") !== -1 ||
+    email.indexOf("mailer-daemon") !== -1 ||
+    email.indexOf("postmaster") !== -1 ||
+    email.indexOf("no-reply") !== -1 ||
+    email.indexOf("noreply") !== -1 ||
+    email.indexOf("bounce") !== -1 ||
+    email.indexOf("delivery") !== -1
+  );
+}
+
+function bestDisplayEmail(row){
+  row = row || {};
+  var raw = row.raw_payload || row.raw || {};
+  var direct = clean(row.lead_email || row.from_email || row.fromEmail || row.email).toLowerCase();
+
+  var emails = collectEmailsFromObject(raw);
+  if(direct &amp;&amp; emails.indexOf(direct) === -1) emails.unshift(direct);
+
+  for(var i=0;i&lt;emails.length;i++){
+    var email = emails[i];
+    if(!isOwnOrSystemEmail(email) &amp;&amp; !looksLikeMaskedSmartleadEmail(email)){
+      return email;
+    }
+  }
+
+  if(direct &amp;&amp; !isOwnOrSystemEmail(direct)){
+    return direct;
+  }
+
+  return "";
+}
+
 function normalizeReplyRow(row){
+  row = row || {};
+  var email = bestDisplayEmail(row);
   return {
-    id: row.id || uid(),
+    id: row.id || row.event_id || uid(),
     campaign_id: row.campaign_id || "",
     campaign_name: row.campaign_name || "",
-    lead_email: row.lead_email || "",
-    lead_name: row.lead_name || "",
-    subject: row.subject || "",
-    body: row.body || "",
-    received_at: row.received_at || row.created_at || "",
+    lead_email: email || row.lead_email || row.from_email || row.fromEmail || row.email || "",
+    lead_name: row.lead_name || row.from_name || row.fromName || row.name || email || "Unknown sender",
+    subject: row.subject || "No subject",
+    body: cleanReplyBody(row.body || row.text || row.message || row.preview_text || row.raw_payload || ""),
+    received_at: row.received_at || row.created_at || row.receivedAt || row.createdAt || nowIso(),
     is_read: !!row.is_read
   };
 }
+
+function extractReplyRowsFromBackendResponse(data){
+  var rows = [];
+
+  if(Array.isArray(data &amp;&amp; data.replyRows)){
+    data.replyRows.forEach(function(row){
+      if(row &amp;&amp; typeof row === "object") rows.push(row);
+    });
+  }
+
+  var results = Array.isArray(data &amp;&amp; data.results) ? data.results : [];
+  results.forEach(function(item){
+    if(item &amp;&amp; item.row &amp;&amp; typeof item.row === "object"){
+      rows.push(item.row);
+    }
+
+    if(item &amp;&amp; item.reply &amp;&amp; typeof item.reply === "object"){
+      rows.push(item.reply);
+    }
+
+    var insertData = item &amp;&amp; item.insertResult ? item.insertResult.data : null;
+    if(Array.isArray(insertData)){
+      insertData.forEach(function(row){
+        if(row &amp;&amp; typeof row === "object") rows.push(row);
+      });
+    }else if(insertData &amp;&amp; typeof insertData === "object"){
+      rows.push(insertData);
+    }
+  });
+
+  var seen = {};
+  return rows.map(normalizeReplyRow).filter(function(row){
+    var key = row.id || (row.lead_email + "|" + row.subject + "|" + row.received_at);
+    if(seen[key]) return false;
+    seen[key] = true;
+    return !!(row.lead_email || row.subject || row.body);
+  });
+}
 async function loadRepliesFromSupabase(showMessage){
   if(!supabaseClient){ await initSupabaseClient(false); }
-  if(!supabaseClient){ if(showMessage) showToast("Supabase is not connected."); return; }
+  if(!supabaseClient){
+    if(showMessage) showToast("Supabase is not connected.");
+    return 0;
+  }
+
   try{
-    var res = await supabaseClient.from("email_replies").select("*").order("received_at", { ascending:false });
+    var res = await supabaseClient
+      .from("email_replies")
+      .select("*")
+      .order("received_at", { ascending:false });
+
     if(res.error) throw res.error;
+
     replyItems = (res.data || []).map(normalizeReplyRow);
     renderReplies();
-    if(showMessage) showToast("Replies refreshed.");
+
+    if(showMessage) showToast("Replies refreshed. Displaying " + replyItems.length + ".");
+    return replyItems.length;
   }catch(err){
-    console.error(err);
-    if(showMessage) showToast("Could not load replies. Run the Smartlead replies SQL first.");
+    console.error("Could not load replies from Supabase", err);
+    if(showMessage) showToast("Could not load replies from Supabase: " + (err.message || err));
+    return 0;
   }
 }
 async function syncRepliesFromBackend(){
   if(!settings.backendUrl){ showToast("Backend URL missing."); return; }
+
+  var btn = el("syncRepliesBtn");
+  if(btn) btn.disabled = true;
+
   try{
     var headers = { "Content-Type":"application/json" };
     if(settings.apiKey){ headers["Authorization"] = "Bearer " + settings.apiKey; }
+
     var res = await fetch(settings.backendUrl, {
       method:"POST",
       headers:headers,
       body:JSON.stringify({ action:"sync_replies", campaignIds:getNewsletterCampaignIds() })
     });
+
     var text = await res.text();
     var data = {};
     try{ data = text ? JSON.parse(text) : {}; }catch(e){ data = { raw:text }; }
-    if(!res.ok || data.ok === false) throw new Error(data.error || data.message || ("Backend failed " + res.status));
-    await loadRepliesFromSupabase(false);
-    showToast("Synced " + (data.inserted || data.count || 0) + " replies.");
+
+    if(!res.ok || data.ok === false){
+      throw new Error(data.error || data.message || ("Backend failed " + res.status));
+    }
+
+    var loaded = await loadRepliesFromSupabase(false);
+
+    if(!loaded){
+      var fallbackRows = extractReplyRowsFromBackendResponse(data);
+      if(fallbackRows.length){
+        replyItems = fallbackRows;
+        renderReplies();
+        loaded = replyItems.length;
+      }
+    }
+
+    var saved = Number(data.inserted || 0);
+    showToast("Synced " + saved + " replies. Displaying " + loaded + ".");
+    console.log("Reply sync response", data);
   }catch(err){
     console.error(err);
     showToast("Reply sync failed: " + (err.message || err));
+  }finally{
+    if(btn) btn.disabled = false;
   }
 }
 function renderReplies(){
@@ -1561,7 +1777,7 @@ function renderReplies(){
     row.innerHTML =
       '&lt;div class="rowTop"&gt;&lt;div&gt;&lt;strong&gt;' + escapeHtml(item.lead_name || item.lead_email || "Unknown sender") + '&lt;/strong&gt;&lt;p&gt;' + escapeHtml(item.lead_email || "") + '&lt;/p&gt;&lt;/div&gt;&lt;span&gt;' + escapeHtml(when) + '&lt;/span&gt;&lt;/div&gt;' +
       '&lt;p&gt;&lt;strong&gt;' + escapeHtml(item.subject || "No subject") + '&lt;/strong&gt;&lt;/p&gt;' +
-      '&lt;div class="replyBody"&gt;' + escapeHtml(item.body || "No reply body found.") + '&lt;/div&gt;' +
+      '&lt;div class="replyBody"&gt;' + escapeHtml(cleanReplyBody(item.body) || "No reply body found.") + '&lt;/div&gt;' +
       '&lt;div class="pillLine" style="margin-top:10px"&gt;&lt;span&gt;Campaign ' + escapeHtml(item.campaign_id || "-") + '&lt;/span&gt;&lt;span&gt;' + escapeHtml(item.campaign_name || "Smartlead") + '&lt;/span&gt;&lt;/div&gt;';
     list.appendChild(row);
   });
